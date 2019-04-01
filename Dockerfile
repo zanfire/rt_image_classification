@@ -4,7 +4,7 @@ RUN apt-get update
 # build toolchain.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install meson ninja-build build-essential
 # Libraries for build.
-RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install libgtk-3-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-good1.0-dev
+RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev libgstreamer-plugins-good1.0-dev
 # Needed in docker because the container is at his minimum.
 RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install software-properties-common
 # Libraries for runtime.

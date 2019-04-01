@@ -3,7 +3,6 @@
 
 #include <glib.h>
 #include <gst/gst.h>
-#include <gtk/gtk.h>
 
 #include <memory>
 
