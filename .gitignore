@@ -34,5 +34,6 @@
 # VScode
 .vscode
 build
+mobilenet
 .ninja_log
 .ninja_deps
