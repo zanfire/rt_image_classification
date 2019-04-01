@@ -21,4 +21,4 @@ RUN mkdir -p build-docker
 RUN meson build-docker
 RUN ninja -C build-docker
 
-RUN ./build/rt_image_classification -h
+RUN ./build-docker/rt_image_classification -h
