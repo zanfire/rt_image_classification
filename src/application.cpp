@@ -102,15 +102,11 @@ bool Application::setup(char const* device, char const* model, char const* label
 }
 
 void Application::run() {
-  // start pipeline
+  // set pipeline in start state.
   gst_element_set_state (pipeline_.get(), GST_STATE_PLAYING);
-
-  /* set window title */
-  //_set_window_title ("img_mixed", "Mixed");
-  //_set_window_title ("img_origin", "Original");
-  // start main loop
+  // run main loop. It will block until main loop quits.
   g_main_loop_run(mainloop_.get());
-  // TODO: Shutdown pipeline.
+  // set pipline in stop (NULL) state.
   gst_element_set_state (pipeline_.get(), GST_STATE_NULL);
 }
 
