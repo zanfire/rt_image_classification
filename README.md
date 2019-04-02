@@ -14,14 +14,14 @@ This demo application requires for compilation and runtime:
 Setup steps:
 
 ``
-# Add nnstreamer ppa for tensorflow-lite.
+ Add nnstreamer ppa for tensorflow-lite.
 add-apt-repository ppa:nnstreamer/ppa
 apt-get update
-# Min set for compile
+ Min set for compile
 sudo apt-get install meson ninja-build build-essential
 sudo apt-get install libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev libcairo2-dev tensorflow-lite-dev
 
-# For runtime
+ For runtime
 sudo apt-get install gstreamer1.0-plugins-good gstreamer1.0-plugins-base-apps gstreamer1.0-plugins-base
 ``
  
