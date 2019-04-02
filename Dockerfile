@@ -12,6 +12,7 @@ RUN DEBIAN_FRONTEND=noninteractive add-apt-repository ppa:nnstreamer/ppa
 RUN apt-get update
 #RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install nnstreamer nnstreamer-dev nnstreamer-tensorflow-lite tensorflow-dev tensorflow-lite-dev
 RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install tensorflow-lite-dev
+RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install libcairo2-dev
 
 # ADD current directory (git clone dir) to the docker.
 ADD . /buildroot
