@@ -122,6 +122,14 @@ bool Model::activate() {
     interpreter_->AllocateTensors();
     tflite::PrintInterpreterState(interpreter_.get());
 
+    int idx = 0;
+    auto outs = interpreter_->outputs();
+    for (auto& o : outs) {
+      g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
+      idx++;
+    }
+
+
     return true;
   }
   else {
@@ -168,6 +176,12 @@ std::string Model::get_label(){
   return "";
 }
 
+std::vector<uint8_t> Model::get_overlay(int* width) {
+  std::lock_guard<std::mutex> guard(overlayMtx_);
+  if (width != nullptr) *width = overlayFrameWidth_; 
+  return overlayFrame_;
+}
+
 
 void Model::onNewFrame(guint8 * buffer, guint len) {
   if (buffer == nullptr) return;
@@ -207,7 +221,7 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   int idx = 0;
   auto outs = interpreter_->outputs();
   int reshapeIndex = 0;
-  int intIndex = 0;
+  int intIndex = -1;
   for (auto& o : outs) {
     //g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
     if (!g_strcmp0(interpreter_->GetOutputName(idx), "MobilenetV1/Predictions/Reshape_1")) {
@@ -222,16 +236,20 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   auto output = saveTensorOutput(reshapeIndex);
   std::vector<std::pair<float, int> > top_results;
   GetTopN(output, 5, 0.1, &top_results);
-
-  // TODO: 
-  overlayFrame_ = saveTensorOutputQuantMatrix(intIndex, channel_, &overlayFrameWidth_);
-
+  // Set the label 
   for (int i = 0; i < top_results.size(); i++) {
     auto el = top_results[i];
-    g_print("Result %f %d - %s\n", el.first, el.second, labels_[el.second].c_str());
+    //g_print("Result %f %d - %s\n", el.first, el.second, labels_[el.second].c_str());
     index_ = el.second;
     acc_ = el.first;
   }
+
+  // TODO: 
+  if (intIndex >= 0) {
+    std::lock_guard<std::mutex> guard(overlayMtx_);
+    overlayFrame_ = saveTensorOutputQuantMatrix(intIndex, channel_, &overlayFrameWidth_);
+  }
+
   return;
 }
 
@@ -253,7 +271,7 @@ std::vector<float> Model::saveTensorOutput(int idx) {
   if (output_dims->size == 4) {
     output_size = output_dims->data[1] * output_dims->data[2] * output_dims->data[3];
   }
-  g_print("Output dims size %d - output size %d quant %s\n", output_dims->size, output_size, is_quantized ? "yes" : "false");
+  //g_print("Output dims size %d - output size %d quant %s\n", output_dims->size, output_size, is_quantized ? "yes" : "false");
 
   if (is_quantized) {
     uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(idx);
@@ -287,8 +305,8 @@ std::vector<uint8_t> Model::saveTensorOutputQuantMatrix(int idx, int channel, in
   }
   
   intput_size = input_dims->data[1] * input_dims->data[2] * input_dims->data[3];
-  g_print("tensor dims size %d - %d %d %d %d\n", input_dims->size, input_dims->data[0], input_dims->data[1], input_dims->data[2], input_dims->data[3]);
-  g_print("tensor dims size %d - output size %d quant %s\n", input_dims->size, intput_size, is_quantized ? "yes" : "false");
+  //g_print("tensor dims size %d - %d %d %d %d\n", input_dims->size, input_dims->data[0], input_dims->data[1], input_dims->data[2], input_dims->data[3]);
+  //g_print("tensor dims size %d - output size %d quant %s\n", input_dims->size, intput_size, is_quantized ? "yes" : "false");
 
   if (is_quantized) {
     uint8_t* quantized_input = interpreter_->typed_output_tensor<uint8_t>(idx);

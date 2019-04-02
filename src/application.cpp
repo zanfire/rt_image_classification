@@ -72,50 +72,56 @@ static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
   }
 
   /* FIXME: this assumes a pixel-aspect-ratio of 1/1 */
-  int w = app->model_.overlayFrameWidth_;
+  int w = 0;
+  // Get overlay frame and width from the model.
+  // This is a copy.
+  auto frame = app->model_.get_overlay(&w);
   int h = w;
-  if ((w * h) == 0) return;
+  uint32_t* data = nullptr;
+
+  //
+  // Here we write the classification of the object.
+  //
+  cairo_scale(cr, 1.0, 1.0);
+  cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 1.0);
+  cairo_select_font_face(cr, "Monospace",
+      CAIRO_FONT_SLANT_NORMAL,
+      CAIRO_FONT_WEIGHT_BOLD);
+  cairo_set_font_size(cr, 24);
+  cairo_move_to(cr, 20, 20);
+  std::string label = app->model_.get_label();
+  cairo_show_text(cr, label.empty() ? " - " :  label.c_str());
 
 
-  int output_width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
-  int output_height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
-  int scale = output_width / w;
+  // 
+  // Here we render the overlay.
+  //
+  // Draw the overlay if we have a valid size.
+  if ((w * h) > 0) {
 
-  cairo_scale (cr, 50, 50);
+    int output_width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
+    //int output_height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
+    float scale = output_width / (float)w;
+    cairo_scale(cr, scale, scale);
 
-  uint32_t* data = (uint32_t*)malloc(w * h * sizeof(uint32_t));
-  auto frame = app->model_.overlayFrame_;
-  int frameIdx = 0;
-  for (int i = 0; i < (w * h); i++) {
-    data[i] = 0x50000000;
-    if ((frameIdx) >= frame.size()) continue;
-    auto r = frame[frameIdx];
-    auto g = 0; //frame[frameIdx + 1];
-    auto b = 0; //frame[frameIdx + 2];
-    data[i] = 0x55000000 | (r << 16) | (g << 8) | b;
-    frameIdx += 1;
+    data = (uint32_t*)malloc(w * h * sizeof(uint32_t));
+
+    for (int i = 0; i < (w * h); i++) {
+      // By default 0x10 on the alpha channel
+      data[i] = 0x10000000;
+      // I like read, write Alpha 0x30 and red.
+      data[i] = 0x30000000 | (frame[i] << 16);
+    }
+    int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
+    // Create a cairo images from the 
+    cairo_surface_t* image = cairo_image_surface_create_for_data((uint8_t*)data, CAIRO_FORMAT_ARGB32, w, h, stride);
+
+    cairo_set_source_surface (cr, image, 0, 0);
+    cairo_paint (cr);
+    cairo_surface_destroy (image);
   }
-  int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
-  cairo_surface_t* image = cairo_image_surface_create_for_data((uint8_t*)&data, CAIRO_FORMAT_ARGB32, w, h, stride);
 
-  cairo_set_source_surface (cr, image, 0, 0);
-  cairo_paint (cr);
-
-  cairo_surface_destroy (image);
-  free(data);
-}
-
-static gboolean onTimerCallback(gpointer user_data) {
-  Application* app = (Application*)user_data;
-
-  GstElement* overlay = gst_bin_get_by_name (GST_BIN (app->pipeline_.get()), "tensor_res");
-  if (overlay) {
-    std::string label = app->model_.get_label();
-    g_object_set (overlay, "text", label.empty() ? " - " :  label.c_str(), nullptr);
-    gst_object_unref(overlay);
-    GST_DEBUG("Updating label %s\n", label.c_str());
-  }
-  return true; // return true mean contine.
+  if (data != nullptr) free(data);
 }
 
 bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel) {
@@ -125,7 +131,7 @@ bool Application::setup(char const* device, char const* model, char const* label
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
   char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
       "video/x-raw,width=1280,height=720,format=RGBx ! videocrop top=0 left=280 right=280 bottom=0 ! tee name=t_raw "
-      "t_raw. ! queue ! textoverlay name=tensor_res font-desc=Sans,24 ! videoconvert ! cairooverlay name=tensor_overlay ! "
+      "t_raw. ! queue ! videoconvert ! cairooverlay name=tensor_overlay ! "
       " ximagesink name=img_tensor "
       "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 !"
       "appsink name=tensor_sink", device);
@@ -160,10 +166,6 @@ bool Application::setup(char const* device, char const* model, char const* label
     g_signal_connect(element, "caps-changed", (GCallback)onPrepareOverlay, this);
     gst_object_unref(element);
   }
-
-  // timer to update result.
-  timer_id_ = g_timeout_add (1000, onTimerCallback, this);
-
   return true;
 }
 

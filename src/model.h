@@ -32,10 +32,10 @@ private:
   // tensorflow lite 
   std::unique_ptr<tflite::FlatBufferModel> model_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
-public:
-  // Intermediate state
+  // Data for render the overlay.
+  std::mutex overlayMtx_;
   std::vector<uint8_t> overlayFrame_;
-  int overlayFrameWidth_;
+  int overlayFrameWidth_ = 0;
 
 public:
   /**
@@ -49,7 +49,7 @@ public:
   bool load(char const* model, char const* label, char const* tensor_name, int channel);
 
   /**
-   * @brief ON new frame.
+   * @brief On new frame.
    * 
    * @param buffer 
    * @param size 
@@ -63,6 +63,14 @@ public:
    */
   std::string get_label();
 
+  /**
+   * @brief Get the overlay frame.
+   * 
+   * @param width 
+   * @return std::vector<uint8_t> 
+   */
+  std::vector<uint8_t> get_overlay( int* width);
+
 private:
   bool load_model(char const* model);
   bool load_labels(char const* path);
@@ -73,7 +81,9 @@ private:
    */
   std::vector<float> saveTensorOutput(int idx);
   /**
-   * @
+   * Save the output matrix.
+   * 
+   * @remark not thread safe.
    * 
    * @param idx 
    * @param channel 
