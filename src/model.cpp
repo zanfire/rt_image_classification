@@ -22,9 +22,8 @@ const std::string output_layer_name = "softmax1";
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
-void GetTopN(
-    const float* prediction, const int prediction_size, const int num_results,
-    const float threshold, std::vector<std::pair<float, int> >* top_results) {
+void GetTopN(float const* prediction, int prediction_size, const int num_results, const float threshold, std::vector<std::pair<float, int> >* top_results) {
+  //g_print("prediction size %d", prediction_size);
   // Will contain top N results in ascending order.
   std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int> >,
                       std::greater<std::pair<float, int> > >
@@ -145,10 +144,10 @@ bool Model::load_labels(char const* path) {
   input.close();
 
   // Add padding
-  /*const int padding = 16;
-  while (lables_.size() % padding) {
-    lablel_.emplace_back();
-  }*/
+  const int padding = 16;
+  while (labels_.size() % padding) {
+    labels_.emplace_back();
+  }
   return true;
 }
 
@@ -184,10 +183,81 @@ std::string Model::get_label(){
 }
 
 
-void Model::onNewFrame(guint8 * scores, guint len) {
-  if (scores == nullptr) return false;
+void Model::onNewFrame(guint8 * buffer, guint len) {
+  if (buffer == nullptr) return;
   
-  g_print("New frames %d -> %d\n", old_index, index_);
-  return true;
+  //g_print("New frames %p -> %u\n", buffer, len);
+
+  uint8_t* in = buffer;
+
+  int image_width = 224;
+  int image_height = 224;
+  int image_channels = 4;
+
+  int input = interpreter_->inputs()[0];
+  TfLiteTensor *input_tensor = interpreter_->tensor(input);
+
+  bool is_quantized;
+    switch (input_tensor->type) {
+    case kTfLiteFloat32:
+      is_quantized = false;
+      break;
+    case kTfLiteUInt8:
+      is_quantized = true;
+      break;
+      return;
+  }
+
+  if (is_quantized) {
+    uint8_t* out = interpreter_->typed_tensor<uint8_t>(input);
+    ProcessInputWithQuantizedModel(in, out, image_width, image_height, image_channels);
+  } 
+  else {
+    float* out = interpreter_->typed_tensor<float>(input);
+    ProcessInputWithFloatModel(in, out, image_width, image_height, image_channels);
+  }
+
+  if (interpreter_->Invoke() != kTfLiteOk) {
+    GST_ERROR("Failed to invoke!");
+  }
+
+  // read output size from the output sensor
+  const int output_tensor_index = interpreter_->outputs()[0];
+  TfLiteTensor* output_tensor = interpreter_->tensor(output_tensor_index);
+  TfLiteIntArray* output_dims = output_tensor->dims;
+  if (output_dims->size != 2 || output_dims->data[0] != 1) {
+    GST_ERROR("Output of the model is in invalid format.");
+  }
+  const int output_size = output_dims->data[1];
+
+  const int kNumResults = 5;
+  const float kThreshold = 0.1f;
+
+  std::vector<std::pair<float, int> > top_results;
+
+  if (is_quantized) {
+    uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(0);
+    int32_t zero_point = input_tensor->params.zero_point;
+    float scale = input_tensor->params.scale;
+    float output[output_size];
+    for (int i = 0; i < output_size; ++i) {
+      output[i] = (quantized_output[i] - zero_point) * scale;
+    }
+    GetTopN(output, output_size, kNumResults, kThreshold, &top_results);
+  } else {
+    float* output = interpreter_->typed_output_tensor<float>(0);
+    GetTopN(output, output_size, kNumResults, kThreshold, &top_results);
+  }
+
+  //g_print("top result %u\n", top_results.size());
+  //index_ = -1;
+
+  for (int i = 0; i < top_results.size(); i++) {
+    auto el = top_results[i];
+    g_print("Result %f %d - %s\n", el.first, el.second, labels_[el.second].c_str());
+    index_ = el.second;
+    acc_ = el.first;
+  }
+  return;
 }
 

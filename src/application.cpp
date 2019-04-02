@@ -1,5 +1,7 @@
 #include "application.h"
 
+#include <gst/app/gstappsink.h>
+
 //
 // Callback from GstBus
 //
@@ -29,8 +31,11 @@ static void onBusMessage(GstBus * bus, GstMessage * message, gpointer user_data)
 }
 
 
-static void onTensorSinkNewData(GstElement * element, GstBuffer * buffer, gpointer user_data) {
+static GstFlowReturn onTensorSinkNewData(GstElement * element, gpointer user_data) {
   Application* app = (Application*)user_data;
+ 
+  GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK (element));
+  GstBuffer* buffer = gst_sample_get_buffer (sample);
 
   int buffers = gst_buffer_n_memory(buffer);
   GST_DEBUG("onTensorSinkNewData num buffers %d.", buffers);
@@ -39,10 +44,11 @@ static void onTensorSinkNewData(GstElement * element, GstBuffer * buffer, gpoint
     GstMapInfo info;
     if (gst_memory_map (mem, &info, GST_MAP_READ)) {
       GST_DEBUG("Mapped memory %p size %d", info.data, (int) info.size);
-      app->model_.update(info.data, (guint) info.size);
+      app->model_.onNewFrame(info.data, (guint) info.size);
       gst_memory_unmap (mem, &info);
     }
   }
+  return GST_FLOW_OK;
 }
 
 static gboolean onTimerCallback(gpointer user_data) {
@@ -63,14 +69,13 @@ bool Application::setup(char const* device, char const* model, char const* label
   model_.load(model, label);
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
-  char* pipeline = g_strdup_printf("v4l2src name=cam_src device=%s ! videoconvert ! videoscale ! "
-      "video/x-raw,width=640,height=480,format=RGB ! tee name=t_raw "
+  char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
+      "video/x-raw,width=640,height=480,format=RGBx ! tee name=t_raw "
       "t_raw. ! queue ! textoverlay name=tensor_res font-desc=Sans,24 ! "
       "videoconvert ! ximagesink name=img_tensor "
-      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! tensor_converter ! "
-      "tensor_filter framework=tensorflow-lite model=%s silent=false ! "
-      "tensor_sink name=tensor_sink", device, model);
-
+      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 ! "
+      "appsink name=tensor_sink", device, model);
+// cairooverlay for other overlay !!!!!!
 
   g_print("Creating pipeline from string: %s\n", pipeline);
 
@@ -90,9 +95,9 @@ bool Application::setup(char const* device, char const* model, char const* label
   // Tensor callback
   GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline_.get()), "tensor_sink");
   if (element != nullptr) {
-    g_print("tensor sink found\n");
-    bus_signal_id_tensor_sink_new_data_ = g_signal_connect(element, "new-data", (GCallback)onTensorSinkNewData, this);
-    gst_object_unref (element);
+    g_object_set(element, "emit-signals", TRUE, "sync", FALSE, NULL);
+    bus_signal_id_tensor_sink_new_data_ = g_signal_connect(element, "new-sample", (GCallback)onTensorSinkNewData, this);
+    gst_object_unref(element);
   }
 
     /* timer to update result */
