@@ -12,6 +12,7 @@ This demo application requires for compilation and runtime:
   - meson, ninja or make
 
 Setup steps:
+
 ``
 # Add nnstreamer ppa for tensorflow-lite.
 add-apt-repository ppa:nnstreamer/ppa
@@ -67,6 +68,7 @@ Application Options:
 ### Run - examples
 
 Uses webcam /dev/video1 and show the overlay for tensor's output *MobilenetV1/MobilenetV1/Conv2d_13_depthwise/Relu6* channel 2.
+
 ``
 ./rt_image_classification -d /dev/video1 -c 2 -t MobilenetV1/MobilenetV1/Conv2d_13_depthwise/Relu6 
 ``
