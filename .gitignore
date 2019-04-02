@@ -36,3 +36,4 @@
 build
 .ninja_log
 .ninja_deps
+rt_image_classification

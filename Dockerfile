@@ -18,9 +18,5 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -qq -y install libcairo2-dev
 ADD . /buildroot
 # Change current working directory to the git clone.
 WORKDIR /buildroot
-# Build
-RUN mkdir -p build-docker
-RUN meson build-docker
-RUN ninja -C build-docker
-
-RUN ./build-docker/rt_image_classification -h
+RUN make
+RUN ./rt_image_classification -h
