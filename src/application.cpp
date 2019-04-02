@@ -70,10 +70,10 @@ bool Application::setup(char const* device, char const* model, char const* label
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
   char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
-      "video/x-raw,width=640,height=480,format=RGBx ! tee name=t_raw "
+      "video/x-raw,width=1280,height=720,format=RGBx ! videocrop top=0 left=280 right=280 bottom=0 ! tee name=t_raw "
       "t_raw. ! queue ! textoverlay name=tensor_res font-desc=Sans,24 ! "
       "videoconvert ! ximagesink name=img_tensor "
-      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 ! "
+      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 !"
       "appsink name=tensor_sink", device, model);
 // cairooverlay for other overlay !!!!!!
 
