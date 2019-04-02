@@ -12,12 +12,16 @@
 static char* device = nullptr;
 static char* model = nullptr;
 static char* label = nullptr;
+static char* tensor_name = nullptr;
+static int channel = 0;
 
 static GOptionEntry entries[] =
 {
   { "device", 'd', 0, G_OPTION_ARG_STRING, &device, "device path", "/dev/video0" },
   { "model", 'm', 0, G_OPTION_ARG_STRING, &model, "model path", "mobilenet/mobilenet_v1_1.0_224_quant.tflite" },
   { "label", 'l', 0, G_OPTION_ARG_STRING, &label, "label path", "mobilenet/labels.txt" },
+  { "tensor", 't', 0, G_OPTION_ARG_STRING, &tensor_name, "tensor name for overlay", nullptr },
+  { "channel", 'c', 0, G_OPTION_ARG_INT, &channel, "tensor channel for overlay", "0" },
   { nullptr }
 };
 
@@ -37,11 +41,12 @@ int main(int argc, char **argv) {
   if (device == nullptr) device = g_strdup("/dev/video0");
   if (model == nullptr) model = g_strdup("mobilenet/mobilenet_v1_1.0_224_quant.tflite");
   if (label == nullptr) label = g_strdup("mobilenet/labels.txt");
+  if (tensor_name == nullptr) tensor_name = g_strdup("MobilenetV1/MobilenetV1/Conv2d_13_pointwise/Relu6");
 
   g_print("Starting application with camera device %s\n", device);
 
   Application app;
-  if (app.setup(device, model, label)) {
+  if (app.setup(device, model, label, tensor_name, channel)) {
     app.run();
     return EXIT_SUCCESS;
   }

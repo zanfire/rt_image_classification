@@ -3,6 +3,7 @@
 
 #include <glib.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <memory>
 
@@ -19,10 +20,11 @@ public:
   guint bus_signal_id_message_ = 0;
   guint bus_signal_id_tensor_sink_new_data_ = 0;
   guint timer_id_ = 0;
-
+  GstVideoInfo currentVideoInfo_;
+  bool currentVideoInfoValid_ = false;
   // Pipeline.
   std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline_;
-
+  // Model 
   Model model_;
 
 public:
@@ -40,7 +42,7 @@ public:
    * 
    * @return true if setup is correct otherwise false.
    */
-  bool setup(char const* device, char const* model, char const* label);
+  bool setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel);
 
   /**
    * @brief Run the main loop.

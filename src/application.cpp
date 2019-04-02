@@ -1,4 +1,12 @@
 #include "application.h"
+// Gstreamer
+#include <gst/video/video.h>
+#include <gst/app/gstappsink.h>
+// Cairo (for overlay)
+#include <cairo.h>
+#include <cairo-gobject.h>
+
+#include <math.h>
 
 //
 // Callback from GstBus
@@ -29,48 +37,105 @@ static void onBusMessage(GstBus * bus, GstMessage * message, gpointer user_data)
 }
 
 
-static void onTensorSinkNewData(GstElement * element, GstBuffer * buffer, gpointer user_data) {
+static GstFlowReturn onAppSinkNewData(GstElement * element, gpointer user_data) {
   Application* app = (Application*)user_data;
+ 
+  GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK (element));
+  GstBuffer* buffer = gst_sample_get_buffer (sample);
 
   int buffers = gst_buffer_n_memory(buffer);
-  GST_DEBUG("onTensorSinkNewData num buffers %d.", buffers);
+  GST_DEBUG("onAppSinkNewData num buffers %d.", buffers);
   for (int i = 0; i < buffers; i++) {
     GstMemory* mem = gst_buffer_peek_memory (buffer, i);
     GstMapInfo info;
     if (gst_memory_map (mem, &info, GST_MAP_READ)) {
       GST_DEBUG("Mapped memory %p size %d", info.data, (int) info.size);
-      app->model_.update(info.data, (guint) info.size);
+      app->model_.onNewFrame(info.data, (guint) info.size);
       gst_memory_unmap (mem, &info);
     }
   }
+  return GST_FLOW_OK;
 }
 
-static gboolean onTimerCallback(gpointer user_data) {
+/* Store the information from the caps that we are interested in. */
+static void onPrepareOverlay(GstElement * overlay, GstCaps * caps, gpointer user_data) {
   Application* app = (Application*)user_data;
-
-  GstElement* overlay = gst_bin_get_by_name (GST_BIN (app->pipeline_.get()), "tensor_res");
-  if (overlay) {
-    std::string label = app->model_.get_label();
-    g_object_set (overlay, "text", label.empty() ? " - " :  label.c_str(), nullptr);
-    gst_object_unref(overlay);
-    GST_DEBUG("Updating label %s\n", label.c_str());
-  }
-  return true; // return true mean contine.
+  app->currentVideoInfoValid_ = gst_video_info_from_caps (&app->currentVideoInfo_, caps);
 }
 
-bool Application::setup(char const* device, char const* model, char const* label) {
+/* Draw the overlay. 
+ * This function draws a cute "beating" heart. */
+static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp, guint64 duration, gpointer user_data) {
+  Application* app = (Application*)user_data;
+  if (!app->currentVideoInfoValid_) {
+    return;
+  }
 
-  model_.load(model, label);
+  /* FIXME: this assumes a pixel-aspect-ratio of 1/1 */
+  int w = 0;
+  // Get overlay frame and width from the model.
+  // This is a copy.
+  auto frame = app->model_.get_overlay(&w);
+  int h = w;
+  uint32_t* data = nullptr;
+
+  //
+  // Here we write the classification of the object.
+  //
+  cairo_scale(cr, 1.0, 1.0);
+  cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 1.0);
+  cairo_select_font_face(cr, "Monospace",
+      CAIRO_FONT_SLANT_NORMAL,
+      CAIRO_FONT_WEIGHT_BOLD);
+  cairo_set_font_size(cr, 24);
+  cairo_move_to(cr, 20, 20);
+  std::string label = app->model_.get_label();
+  cairo_show_text(cr, label.empty() ? " - " :  label.c_str());
+
+
+  // 
+  // Here we render the overlay.
+  //
+  // Draw the overlay if we have a valid size.
+  if ((w * h) > 0) {
+
+    int output_width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
+    //int output_height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
+    float scale = output_width / (float)w;
+    cairo_scale(cr, scale, scale);
+
+    data = (uint32_t*)malloc(w * h * sizeof(uint32_t));
+
+    for (int i = 0; i < (w * h); i++) {
+      // By default 0x10 on the alpha channel
+      data[i] = 0x10000000;
+      // I like read, write Alpha 0x30 and red.
+      data[i] = 0x30000000 | (frame[i] << 16);
+    }
+    int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
+    // Create a cairo images from the 
+    cairo_surface_t* image = cairo_image_surface_create_for_data((uint8_t*)data, CAIRO_FORMAT_ARGB32, w, h, stride);
+
+    cairo_set_source_surface (cr, image, 0, 0);
+    cairo_paint (cr);
+    cairo_surface_destroy (image);
+  }
+
+  if (data != nullptr) free(data);
+}
+
+bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel) {
+
+  model_.load(model, label, tensor_name, channel);
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
-  char* pipeline = g_strdup_printf("v4l2src name=cam_src device=%s ! videoconvert ! videoscale ! "
-      "video/x-raw,width=640,height=480,format=RGB ! tee name=t_raw "
-      "t_raw. ! queue ! textoverlay name=tensor_res font-desc=Sans,24 ! "
-      "videoconvert ! ximagesink name=img_tensor "
-      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! tensor_converter ! "
-      "tensor_filter framework=tensorflow-lite model=%s silent=false ! "
-      "tensor_sink name=tensor_sink", device, model);
-
+  char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
+      "video/x-raw,width=1280,height=720,format=RGBx ! videocrop top=0 left=280 right=280 bottom=0 ! tee name=t_raw "
+      "t_raw. ! queue ! videoconvert ! cairooverlay name=tensor_overlay ! "
+      " ximagesink name=img_tensor "
+      "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 !"
+      "appsink name=tensor_sink", device);
+// cairooverlay for other overlay !!!!!!
 
   g_print("Creating pipeline from string: %s\n", pipeline);
 
@@ -90,14 +155,17 @@ bool Application::setup(char const* device, char const* model, char const* label
   // Tensor callback
   GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline_.get()), "tensor_sink");
   if (element != nullptr) {
-    g_print("tensor sink found\n");
-    bus_signal_id_tensor_sink_new_data_ = g_signal_connect(element, "new-data", (GCallback)onTensorSinkNewData, this);
-    gst_object_unref (element);
+    g_object_set(element, "emit-signals", TRUE, "sync", FALSE, NULL);
+    bus_signal_id_tensor_sink_new_data_ = g_signal_connect(element, "new-sample", (GCallback)onAppSinkNewData, this);
+    gst_object_unref(element);
   }
 
-    /* timer to update result */
-  timer_id_ = g_timeout_add (1000, onTimerCallback, this);
-
+  element = gst_bin_get_by_name(GST_BIN(pipeline_.get()), "tensor_overlay");
+  if (element != nullptr) {
+    g_signal_connect(element, "draw", (GCallback)onDrawOverlay, this);
+    g_signal_connect(element, "caps-changed", (GCallback)onPrepareOverlay, this);
+    gst_object_unref(element);
+  }
   return true;
 }
 
