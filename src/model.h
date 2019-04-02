@@ -22,6 +22,7 @@ private:
   std::string model_path_;
   std::string label_path_;
   std::vector<std::string> labels_;
+  std::string tensor_name_;
 
   int index_;
   float acc_ = 0.0f;
@@ -29,6 +30,9 @@ private:
   // tensorflow lite 
   std::unique_ptr<tflite::FlatBufferModel> model_;
   std::unique_ptr<tflite::Interpreter> interpreter_;
+public:
+  // Intermediate state
+  std::vector<float> debugFrame_;
 
 public:
   /**
@@ -39,8 +43,14 @@ public:
   Model() = default;
   ~Model() = default;
 
-  bool load(char const* model, char const* label);
+  bool load(char const* model, char const* label, char const* tensor_name);
 
+  /**
+   * @brief ON new frame.
+   * 
+   * @param buffer 
+   * @param size 
+   */
   void onNewFrame(guint8* buffer, guint size);
 
   /**
@@ -63,6 +73,9 @@ public:
 private:
   bool load_model(char const* model);
   bool load_labels(char const* path);
+  bool activate();
+
+  std::vector<float> saveTensorOutput(int idx);
 };
 
 #endif

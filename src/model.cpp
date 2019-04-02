@@ -15,23 +15,22 @@
 constexpr int wanted_input_width = 224;
 constexpr int wanted_input_height = 224;
 constexpr int wanted_input_channels = 3;
-constexpr float input_mean = 127.5f;
-constexpr float input_std = 127.5f;
+constexpr float input_mean = 128.0f;
+constexpr float input_std = 127.0f;
 const std::string input_layer_name = "input";
 const std::string output_layer_name = "softmax1";
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
-void GetTopN(float const* prediction, int prediction_size, const int num_results, const float threshold, std::vector<std::pair<float, int> >* top_results) {
+void GetTopN(std::vector<float>& prediction, const int num_results, const float threshold, std::vector<std::pair<float, int> >* top_results) {
   //g_print("prediction size %d", prediction_size);
   // Will contain top N results in ascending order.
   std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int> >,
                       std::greater<std::pair<float, int> > >
       top_result_pq;
-
-  const long count = prediction_size;
-  for (int i = 0; i < count; ++i) {
-    const float value = prediction[i];
+  
+  for (int i = 0; i < prediction.size(); i++) {
+    float value = prediction[i];
     // Only add it if it beats the threshold and has a chance at being in
     // the top N.
     if (value < threshold) {
@@ -89,17 +88,26 @@ void ProcessInputWithQuantizedModel(
 }
 
 
-bool Model::load(char const* model, char const* label) {
+bool Model::load(char const* model, char const* label, char const* tensor_name) {
   model_path_ = model;
   label_path_ = label;
+  if (tensor_name != nullptr) {
+    tensor_name_ = tensor_name;
+  }
 
   bool res1 = load_model(model);
   bool res2 = load_labels(label);
-  g_print("Load model %s and labels %s\n", res1 ? "OK" : "FAIL", res1 ? "OK" : "FAIL");
+  bool res3 = (res1 && res2) ? activate() : false;
+  g_print("Load model %s and labels %s, activated %s\n", res1 ? "OK" : "FAIL", res2 ? "OK" : "FAIL", res3 ? "OK" : "FAIL");
+  return res1 && res2 && res3;
+}
 
-  if (!res1 || !res2) {
-    return false;
-  }
+bool Model::load_model(char const* path) {
+  model_ = tflite::FlatBufferModel::BuildFromFile(path);
+  return model_.get() != nullptr;
+}
+
+bool Model::activate() {
   // Build the interpreter
   tflite::ops::builtin::BuiltinOpResolver resolver;
   tflite::InterpreterBuilder builder(*model_, resolver);
@@ -112,6 +120,7 @@ bool Model::load(char const* model, char const* label) {
     // Allocate tensor buffers.
     interpreter_->AllocateTensors();
     tflite::PrintInterpreterState(interpreter_.get());
+
     return true;
   }
   else {
@@ -119,10 +128,6 @@ bool Model::load(char const* model, char const* label) {
   }
 }
 
-bool Model::load_model(char const* path) {
-  model_ = tflite::FlatBufferModel::BuildFromFile(path);
-  return model_.get() != nullptr;
-}
 
 bool Model::load_labels(char const* path) {
   std::ifstream input(path);
@@ -222,35 +227,26 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   }
 
   // read output size from the output sensor
-  const int output_tensor_index = interpreter_->outputs()[0];
-  TfLiteTensor* output_tensor = interpreter_->tensor(output_tensor_index);
-  TfLiteIntArray* output_dims = output_tensor->dims;
-  if (output_dims->size != 2 || output_dims->data[0] != 1) {
-    GST_ERROR("Output of the model is in invalid format.");
-  }
-  const int output_size = output_dims->data[1];
-
-  const int kNumResults = 5;
-  const float kThreshold = 0.1f;
-
-  std::vector<std::pair<float, int> > top_results;
-
-  if (is_quantized) {
-    uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(0);
-    int32_t zero_point = input_tensor->params.zero_point;
-    float scale = input_tensor->params.scale;
-    float output[output_size];
-    for (int i = 0; i < output_size; ++i) {
-      output[i] = (quantized_output[i] - zero_point) * scale;
+  int idx = 0;
+  auto outs = interpreter_->outputs();
+  int reshapeIndex = 0;
+  int intIndex = 0;
+  for (auto& o : outs) {
+    g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
+    if (!g_strcmp0(interpreter_->GetOutputName(idx), "MobilenetV1/Predictions/Reshape_1")) {
+      reshapeIndex = idx;
     }
-    GetTopN(output, output_size, kNumResults, kThreshold, &top_results);
-  } else {
-    float* output = interpreter_->typed_output_tensor<float>(0);
-    GetTopN(output, output_size, kNumResults, kThreshold, &top_results);
+    if (!g_strcmp0(interpreter_->GetOutputName(idx), tensor_name_.c_str())) {
+      intIndex = idx;
+    }
+    idx++;
   }
 
-  //g_print("top result %u\n", top_results.size());
-  //index_ = -1;
+  auto output = saveTensorOutput(reshapeIndex);
+  std::vector<std::pair<float, int> > top_results;
+  GetTopN(output, 5, 0.1, &top_results);
+
+  debugFrame_ = saveTensorOutput(intIndex);
 
   for (int i = 0; i < top_results.size(); i++) {
     auto el = top_results[i];
@@ -261,3 +257,37 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   return;
 }
 
+
+std::vector<float> Model::saveTensorOutput(int idx) {
+  std::vector<float> result;
+  int input = interpreter_->inputs()[0];
+  TfLiteTensor *input_tensor = interpreter_->tensor(input);
+  bool is_quantized = false;
+  if (input_tensor->type == kTfLiteUInt8) {
+    is_quantized = true;
+  }
+
+    // Reshape get result
+  const int output_tensor_index = interpreter_->outputs()[idx];
+  TfLiteTensor* output_tensor = interpreter_->tensor(output_tensor_index);
+  TfLiteIntArray* output_dims = output_tensor->dims;
+  const int output_size = output_dims->data[1];
+  if (output_dims->)
+  g_print("Output dims size %d - output size %d quant %s\n", output_dims->size, output_size, is_quantized ? "yes" : "false");
+
+  if (is_quantized) {
+    uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(idx);
+    int32_t zero_point = input_tensor->params.zero_point;
+    float scale = input_tensor->params.scale;
+    for (int i = 0; i < output_size; i++) {
+      result.push_back((quantized_output[i] - zero_point) * scale);
+    }
+    
+  } else {
+    float* output = interpreter_->typed_output_tensor<float>(0);
+    for (int i = 0; i < output_size; i++) {
+      result.push_back(output[i]);
+    }
+  }
+  return result;
+}
