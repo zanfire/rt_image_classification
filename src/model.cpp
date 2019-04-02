@@ -22,14 +22,14 @@ const std::string output_layer_name = "softmax1";
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
-void GetTopN(std::vector<float>& prediction, const int num_results, const float threshold, std::vector<std::pair<float, int> >* top_results) {
+void GetTopN(std::vector<float>& prediction, int num_results, float threshold, std::vector<std::pair<float, int> >* top_results) {
   //g_print("prediction size %d", prediction_size);
   // Will contain top N results in ascending order.
   std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int> >,
                       std::greater<std::pair<float, int> > >
       top_result_pq;
   
-  for (int i = 0; i < prediction.size(); i++) {
+  for (size_t i = 0; i < prediction.size(); i++) {
     float value = prediction[i];
     // Only add it if it beats the threshold and has a chance at being in
     // the top N.
@@ -40,7 +40,7 @@ void GetTopN(std::vector<float>& prediction, const int num_results, const float 
     top_result_pq.push(std::pair<float, int>(value, i));
 
     // If at capacity, kick the smallest value out.
-    if (top_result_pq.size() > num_results) {
+    if (top_result_pq.size() > (size_t)num_results) {
       top_result_pq.pop();
     }
   }
@@ -193,16 +193,7 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   int input = interpreter_->inputs()[0];
   TfLiteTensor *input_tensor = interpreter_->tensor(input);
 
-  bool is_quantized;
-    switch (input_tensor->type) {
-    case kTfLiteFloat32:
-      is_quantized = false;
-      break;
-    case kTfLiteUInt8:
-      is_quantized = true;
-      break;
-      return;
-  }
+  bool is_quantized = (input_tensor->type == kTfLiteUInt8);
 
   if (is_quantized) {
     uint8_t* out = interpreter_->typed_tensor<uint8_t>(input);
@@ -218,26 +209,23 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   }
 
   // read output size from the output sensor
-  int idx = 0;
   auto outs = interpreter_->outputs();
   int reshapeIndex = 0;
   int intIndex = -1;
-  for (auto& o : outs) {
-    //g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
-    if (!g_strcmp0(interpreter_->GetOutputName(idx), "MobilenetV1/Predictions/Reshape_1")) {
-      reshapeIndex = idx;
+  for (size_t i = 0; i < outs.size(); i++) {
+    if (!g_strcmp0(interpreter_->GetOutputName(i), "MobilenetV1/Predictions/Reshape_1")) {
+      reshapeIndex = (int)i;
     }
-    if (!g_strcmp0(interpreter_->GetOutputName(idx), tensor_name_.c_str())) {
-      intIndex = idx;
+    if (!g_strcmp0(interpreter_->GetOutputName(i), tensor_name_.c_str())) {
+      intIndex = (int)i;
     }
-    idx++;
   }
 
   auto output = saveTensorOutput(reshapeIndex);
   std::vector<std::pair<float, int> > top_results;
   GetTopN(output, 5, 0.1, &top_results);
   // Set the label 
-  for (int i = 0; i < top_results.size(); i++) {
+  for (size_t i = 0; i < top_results.size(); i++) {
     auto el = top_results[i];
     //g_print("Result %f %d - %s\n", el.first, el.second, labels_[el.second].c_str());
     index_ = el.second;

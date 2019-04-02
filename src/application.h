@@ -9,10 +9,18 @@
 
 #include "model.h"
 
+/**
+ * @brief Application
+ * 
+ * Here we store all things that we need to hold for make the application run and do 
+ * what we want...
+ * 
+ * - Run gstreamer pipeline
+ * - Host callback from gstreamer.
+ * - Retain the model and load the model.
+ */
 class Application {
 public:
-  // Gtk main window/
-  //GtkWidget* main_window = nullptr;
   // Main loop.
   std::unique_ptr<GMainLoop, decltype(&g_main_loop_unref)> mainloop_;
   // Bus watcher.

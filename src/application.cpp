@@ -11,7 +11,7 @@
 //
 // Callback from GstBus
 //
-static void onBusMessage(GstBus * bus, GstMessage * message, gpointer user_data) {
+static void on_bus_message(GstBus * bus, GstMessage * message, gpointer user_data) {
   Application* app = (Application*)user_data;
   switch (GST_MESSAGE_TYPE (message)) {
     case GST_MESSAGE_EOS: {
@@ -31,12 +31,19 @@ static void onBusMessage(GstBus * bus, GstMessage * message, gpointer user_data)
       app->quit();
       break;
     }
+    case GST_MESSAGE_WARNING: {
+      GST_ERROR("received warning message");
+      app->quit();
+      break;
+    }
     default:
       break;
   }
 }
 
-
+//
+// Call back from appsink with new frame for the model.
+//
 static GstFlowReturn onAppSinkNewData(GstElement * element, gpointer user_data) {
   Application* app = (Application*)user_data;
  
@@ -57,21 +64,22 @@ static GstFlowReturn onAppSinkNewData(GstElement * element, gpointer user_data) 
   return GST_FLOW_OK;
 }
 
-/* Store the information from the caps that we are interested in. */
-static void onPrepareOverlay(GstElement * overlay, GstCaps * caps, gpointer user_data) {
+//
+// Store the information from the caps that we are interested in. 
+//
+static void on_prepare_overlay(GstElement * overlay, GstCaps * caps, gpointer user_data) {
   Application* app = (Application*)user_data;
   app->currentVideoInfoValid_ = gst_video_info_from_caps (&app->currentVideoInfo_, caps);
 }
 
-/* Draw the overlay. 
- * This function draws a cute "beating" heart. */
-static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp, guint64 duration, gpointer user_data) {
+//
+// Draw text and image overlay in the cairooverlay element.
+//
+static void on_draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestamp, guint64 duration, gpointer user_data) {
   Application* app = (Application*)user_data;
   if (!app->currentVideoInfoValid_) {
     return;
   }
-
-  /* FIXME: this assumes a pixel-aspect-ratio of 1/1 */
   int w = 0;
   // Get overlay frame and width from the model.
   // This is a copy.
@@ -124,18 +132,28 @@ static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
   if (data != nullptr) free(data);
 }
 
+
 bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel) {
 
   model_.load(model, label, tensor_name, channel);
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
+
+  //
+  // Setup the pipeline
+  //
+  // v4l2src -> videoconvert (RGBx) -> videoscale (to 720p if needed) -> crop (we use a square not a rectangle) -> tee (split) /
+  //
+  //    tee -> queue -> videoconvert  cairooverlay -> ximagesink (render window)
+  //    |
+  //    -> queue ->videoscale (224x224) -> appsink (app sink push frames to the model)
+  //
   char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
       "video/x-raw,width=1280,height=720,format=RGBx ! videocrop top=0 left=280 right=280 bottom=0 ! tee name=t_raw "
       "t_raw. ! queue ! videoconvert ! cairooverlay name=tensor_overlay ! "
       " ximagesink name=img_tensor "
       "t_raw. ! queue leaky=2 max-size-buffers=2 ! videoscale ! video/x-raw,width=224,height=224 !"
       "appsink name=tensor_sink", device);
-// cairooverlay for other overlay !!!!!!
 
   g_print("Creating pipeline from string: %s\n", pipeline);
 
@@ -146,24 +164,25 @@ bool Application::setup(char const* device, char const* model, char const* label
     GST_ERROR("Failed to allocate pipeline.");
     return false;
   }
+  
   // Get GstBus
   bus_.reset(gst_element_get_bus(pipeline_.get()));
   // Setup message bus signal.
   gst_bus_add_signal_watch (bus_.get());
-  // TODO: rename here to be more clear.
-  bus_signal_id_message_ = g_signal_connect(bus_.get(), "message", (GCallback) onBusMessage, this);
-  // Tensor callback
+  g_signal_connect(bus_.get(), "message", (GCallback) on_bus_message, this);
+  
+  // Setup appsink to push new video frame to the model.
   GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline_.get()), "tensor_sink");
   if (element != nullptr) {
     g_object_set(element, "emit-signals", TRUE, "sync", FALSE, NULL);
     bus_signal_id_tensor_sink_new_data_ = g_signal_connect(element, "new-sample", (GCallback)onAppSinkNewData, this);
     gst_object_unref(element);
   }
-
+  // Setup the overlay to draw overlay and text.
   element = gst_bin_get_by_name(GST_BIN(pipeline_.get()), "tensor_overlay");
   if (element != nullptr) {
-    g_signal_connect(element, "draw", (GCallback)onDrawOverlay, this);
-    g_signal_connect(element, "caps-changed", (GCallback)onPrepareOverlay, this);
+    g_signal_connect(element, "draw", (GCallback)on_draw_overlay, this);
+    g_signal_connect(element, "caps-changed", (GCallback)on_prepare_overlay, this);
     gst_object_unref(element);
   }
   return true;
@@ -171,11 +190,15 @@ bool Application::setup(char const* device, char const* model, char const* label
 
 void Application::run() {
   // set pipeline in start state.
-  gst_element_set_state (pipeline_.get(), GST_STATE_PLAYING);
+  auto res = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
+  if (res == GST_STATE_CHANGE_FAILURE) {
+    g_print("Failed to start gstreamer pipeline. Run with GST_DEBUG=3");
+    return;
+  }
   // run main loop. It will block until main loop quits.
   g_main_loop_run(mainloop_.get());
   // set pipline in stop (NULL) state.
-  gst_element_set_state (pipeline_.get(), GST_STATE_NULL);
+  gst_element_set_state(pipeline_.get(), GST_STATE_NULL);
 }
 
 void Application::quit() {

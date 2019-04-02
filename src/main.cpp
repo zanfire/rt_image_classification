@@ -8,7 +8,7 @@
 
 #include "application.h"
 
-// TODO: Memory managmenet.
+// command line arguments.
 static char* device = nullptr;
 static char* model = nullptr;
 static char* label = nullptr;
@@ -26,6 +26,7 @@ static GOptionEntry entries[] =
 };
 
 int main(int argc, char **argv) {
+  // Init parsing for command line arguments.
   GError* error = nullptr;
   GOptionContext* context = g_option_context_new("- RealTime image classification.");
   g_option_context_add_main_entries(context, entries, "rt_image_classification");
@@ -35,9 +36,10 @@ int main(int argc, char **argv) {
   if (!g_option_context_parse (context, &argc, &argv, &error)) {
     return EXIT_FAILURE;
   }
-  // Inits
+  // Init GStreamer.
   gst_init(&argc, &argv);
 
+  // Setting for command line default.
   if (device == nullptr) device = g_strdup("/dev/video0");
   if (model == nullptr) model = g_strdup("mobilenet/mobilenet_v1_1.0_224_quant.tflite");
   if (label == nullptr) label = g_strdup("mobilenet/labels.txt");
@@ -46,6 +48,7 @@ int main(int argc, char **argv) {
   g_print("Starting application with camera device %s\n", device);
 
   Application app;
+  // Setup application and run.
   if (app.setup(device, model, label, tensor_name, channel)) {
     app.run();
     return EXIT_SUCCESS;
