@@ -24,8 +24,9 @@ LDLIBS  += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs-only-l -
 CFLAGS  += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags cairo)
 LDFLAGS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs-only-L cairo)
 LDLIBS  += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs-only-l --libs-only-other cairo)
-# ls
+# Others libs
 LDLIBS  += -ldl -lpthread
+# Code is in C++11. (not in 14 because we target an Ubuntu 16.04 that uses a gcc 5).
 CXXFLAGS=-g -std=c++11 -Wall -pedantic
 
 .PHONY: rt_image_classification clean distclean
