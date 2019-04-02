@@ -5,6 +5,12 @@
 #include <string>
 #include <vector>
 
+// Tensorflow library.
+// TODO: I don't like to put so much in the headers ... reduce to the essential.
+#include "tensorflow/contrib/lite/kernels/register.h"
+#include "tensorflow/contrib/lite/model.h"
+#include "tensorflow/contrib/lite/op_resolver.h"
+#include "tensorflow/contrib/lite/string_util.h"
 
 /**
  * @brief This class load and verify the model. 
@@ -20,6 +26,10 @@ private:
   int index_;
   float acc_ = 0.0f;
 
+  // tensorflow lite 
+  std::unique_ptr<tflite::FlatBufferModel> model_;
+  std::unique_ptr<tflite::Interpreter> interpreter_;
+
 public:
   /**
    * @brief Construct a new Model Loader object
@@ -31,12 +41,28 @@ public:
 
   bool load(char const* model, char const* label);
 
-  bool update(guint8* score, guint len);
+  void onNewFrame(guint8* buffer, guint size);
 
+  /**
+   * @brief 
+   * 
+   * @param score 
+   * @param len 
+   * @return true 
+   * @return false 
+   */
+  bool update(guint8* score, guint len);
+  
+  /**
+   * @brief Return current label and prob.
+   * 
+   * @return std::string 
+   */
   std::string get_label();
 
 private:
-  bool loadLabels(char const* path);
+  bool load_model(char const* model);
+  bool load_labels(char const* path);
 };
 
 #endif
