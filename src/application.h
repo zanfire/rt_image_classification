@@ -42,7 +42,7 @@ public:
    * 
    * @return true if setup is correct otherwise false.
    */
-  bool setup(char const* device, char const* model, char const* label, char const* tensor_name);
+  bool setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel);
 
   /**
    * @brief Run the main loop.

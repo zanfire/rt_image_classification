@@ -4,6 +4,7 @@
 #include <glib.h>
 #include <string>
 #include <vector>
+#include <mutex>
 
 // Tensorflow library.
 // TODO: I don't like to put so much in the headers ... reduce to the essential.
@@ -23,7 +24,8 @@ private:
   std::string label_path_;
   std::vector<std::string> labels_;
   std::string tensor_name_;
-
+  int channel_ = 0;
+  // Label index/
   int index_;
   float acc_ = 0.0f;
 
@@ -32,7 +34,8 @@ private:
   std::unique_ptr<tflite::Interpreter> interpreter_;
 public:
   // Intermediate state
-  std::vector<float> debugFrame_;
+  std::vector<uint8_t> overlayFrame_;
+  int overlayFrameWidth_;
 
 public:
   /**
@@ -43,7 +46,7 @@ public:
   Model() = default;
   ~Model() = default;
 
-  bool load(char const* model, char const* label, char const* tensor_name);
+  bool load(char const* model, char const* label, char const* tensor_name, int channel);
 
   /**
    * @brief ON new frame.
@@ -52,16 +55,6 @@ public:
    * @param size 
    */
   void onNewFrame(guint8* buffer, guint size);
-
-  /**
-   * @brief 
-   * 
-   * @param score 
-   * @param len 
-   * @return true 
-   * @return false 
-   */
-  bool update(guint8* score, guint len);
   
   /**
    * @brief Return current label and prob.
@@ -74,8 +67,19 @@ private:
   bool load_model(char const* model);
   bool load_labels(char const* path);
   bool activate();
-
+  /**
+   * @brief SAve the tensor output scaled to float.
+   * 
+   */
   std::vector<float> saveTensorOutput(int idx);
+  /**
+   * @
+   * 
+   * @param idx 
+   * @param channel 
+   * @returnstd::vector<uint8_t>>
+   */
+  std::vector<uint8_t> saveTensorOutputQuantMatrix(int idx, int channel, int* width);
 };
 
 #endif

@@ -88,12 +88,13 @@ void ProcessInputWithQuantizedModel(
 }
 
 
-bool Model::load(char const* model, char const* label, char const* tensor_name) {
+bool Model::load(char const* model, char const* label, char const* tensor_name, int channel) {
   model_path_ = model;
   label_path_ = label;
   if (tensor_name != nullptr) {
     tensor_name_ = tensor_name;
   }
+  channel_ = channel;
 
   bool res1 = load_model(model);
   bool res2 = load_labels(label);
@@ -156,26 +157,6 @@ bool Model::load_labels(char const* path) {
   return true;
 }
 
-bool Model::update(guint8 * scores, guint len) {
-  if (scores == nullptr) return false;
-  if (len > labels_.size()) {
-    return false;
-  }
-  guint8 max_score = 0;
-  int old_index = index_;
-  index_ = -1;
-  // TODO: I don't like cast in this way.
-  for (int i = 0; i < (int)len; i++) {
-    if (scores[i] > 0 && scores[i] > max_score) {
-      index_ = i;
-      max_score = scores[i];
-    }
-  }
-  acc_ = max_score / (float)UCHAR_MAX; // score / MAX_UCHAR
-  GST_DEBUG("Update index %d -> %d\n", old_index, index_);
-  return true;
-}
-
 std::string Model::get_label(){
   if (index_ >= 0 && index_ < (int)labels_.size()) {
     std::ostringstream out;
@@ -190,10 +171,6 @@ std::string Model::get_label(){
 
 void Model::onNewFrame(guint8 * buffer, guint len) {
   if (buffer == nullptr) return;
-  
-  //g_print("New frames %p -> %u\n", buffer, len);
-
-  uint8_t* in = buffer;
 
   int image_width = 224;
   int image_height = 224;
@@ -215,11 +192,11 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
 
   if (is_quantized) {
     uint8_t* out = interpreter_->typed_tensor<uint8_t>(input);
-    ProcessInputWithQuantizedModel(in, out, image_width, image_height, image_channels);
+    ProcessInputWithQuantizedModel(buffer, out, image_width, image_height, image_channels);
   } 
   else {
     float* out = interpreter_->typed_tensor<float>(input);
-    ProcessInputWithFloatModel(in, out, image_width, image_height, image_channels);
+    ProcessInputWithFloatModel(buffer, out, image_width, image_height, image_channels);
   }
 
   if (interpreter_->Invoke() != kTfLiteOk) {
@@ -232,7 +209,7 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   int reshapeIndex = 0;
   int intIndex = 0;
   for (auto& o : outs) {
-    g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
+    //g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
     if (!g_strcmp0(interpreter_->GetOutputName(idx), "MobilenetV1/Predictions/Reshape_1")) {
       reshapeIndex = idx;
     }
@@ -246,7 +223,8 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   std::vector<std::pair<float, int> > top_results;
   GetTopN(output, 5, 0.1, &top_results);
 
-  debugFrame_ = saveTensorOutput(intIndex);
+  // TODO: 
+  overlayFrame_ = saveTensorOutputQuantMatrix(intIndex, channel_, &overlayFrameWidth_);
 
   for (int i = 0; i < top_results.size(); i++) {
     auto el = top_results[i];
@@ -271,15 +249,18 @@ std::vector<float> Model::saveTensorOutput(int idx) {
   const int output_tensor_index = interpreter_->outputs()[idx];
   TfLiteTensor* output_tensor = interpreter_->tensor(output_tensor_index);
   TfLiteIntArray* output_dims = output_tensor->dims;
-  const int output_size = output_dims->data[1];
-  if (output_dims->)
+  int output_size = output_dims->data[1];
+  if (output_dims->size == 4) {
+    output_size = output_dims->data[1] * output_dims->data[2] * output_dims->data[3];
+  }
   g_print("Output dims size %d - output size %d quant %s\n", output_dims->size, output_size, is_quantized ? "yes" : "false");
 
   if (is_quantized) {
     uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(idx);
     int32_t zero_point = input_tensor->params.zero_point;
     float scale = input_tensor->params.scale;
-    for (int i = 0; i < output_size; i++) {
+    int step =  output_dims->size == 4 ? output_dims->data[3] : 1; 
+    for (int i = 0; i < output_size; i += step) {
       result.push_back((quantized_output[i] - zero_point) * scale);
     }
     
@@ -288,6 +269,36 @@ std::vector<float> Model::saveTensorOutput(int idx) {
     for (int i = 0; i < output_size; i++) {
       result.push_back(output[i]);
     }
+  }
+  return result;
+}
+
+std::vector<uint8_t> Model::saveTensorOutputQuantMatrix(int idx, int channel, int* width) {
+  std::vector<uint8_t> result;
+  TfLiteTensor* tensor = interpreter_->tensor(interpreter_->outputs()[idx]);
+  bool is_quantized = true;
+  TfLiteIntArray* input_dims = tensor->dims;
+  int intput_size = input_dims->data[1];
+  if (input_dims->size != 4 ) {
+    return result;
+  }
+  if (input_dims->size == 4 && (channel < 0 || channel > input_dims->data[3])) {
+    return result;
+  }
+  
+  intput_size = input_dims->data[1] * input_dims->data[2] * input_dims->data[3];
+  g_print("tensor dims size %d - %d %d %d %d\n", input_dims->size, input_dims->data[0], input_dims->data[1], input_dims->data[2], input_dims->data[3]);
+  g_print("tensor dims size %d - output size %d quant %s\n", input_dims->size, intput_size, is_quantized ? "yes" : "false");
+
+  if (is_quantized) {
+    uint8_t* quantized_input = interpreter_->typed_output_tensor<uint8_t>(idx);
+    int step = input_dims->data[3]; 
+    for (int i = channel; i < intput_size; i += step) {
+      result.push_back(quantized_input[i]);
+    }
+  }
+  if (width != nullptr) {
+    *width = input_dims->data[1];
   }
   return result;
 }

@@ -6,6 +6,8 @@
 #include <cairo.h>
 #include <cairo-gobject.h>
 
+#include <math.h>
+
 //
 // Callback from GstBus
 //
@@ -69,29 +71,29 @@ static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
     return;
   }
 
-  //int width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
-  //int height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
-
-  cairo_scale (cr, 2, 2);
-
   /* FIXME: this assumes a pixel-aspect-ratio of 1/1 */
-  constexpr int w = 112;
-  constexpr int h = 112;
-  uint32_t data[w * h];
-  auto frame = app->model_.debugFrame_;
+  int w = app->model_.overlayFrameWidth_;
+  int h = w;
+  if ((w * h) == 0) return;
+
+
+  int output_width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
+  int output_height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
+  int scale = output_width / w;
+
+  cairo_scale (cr, 50, 50);
+
+  uint32_t* data = (uint32_t*)malloc(w * h * sizeof(uint32_t));
+  auto frame = app->model_.overlayFrame_;
+  int frameIdx = 0;
   for (int i = 0; i < (w * h); i++) {
-    data[i] = 0x10000000;
-    if (i >= frame.size()) continue;
-    float f = frame[i];
-    if (f >= 0.5) {
-      data[i] = 0xFFFF0000;
-    }
-    else if (f >= 0.0) {
-      data[i] = 0x10500000;
-    }
-    if (f < 0.0) {
-      data[i] = 0x10000000;
-    }
+    data[i] = 0x50000000;
+    if ((frameIdx) >= frame.size()) continue;
+    auto r = frame[frameIdx];
+    auto g = 0; //frame[frameIdx + 1];
+    auto b = 0; //frame[frameIdx + 2];
+    data[i] = 0x55000000 | (r << 16) | (g << 8) | b;
+    frameIdx += 1;
   }
   int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
   cairo_surface_t* image = cairo_image_surface_create_for_data((uint8_t*)&data, CAIRO_FORMAT_ARGB32, w, h, stride);
@@ -99,9 +101,8 @@ static void onDrawOverlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
   cairo_set_source_surface (cr, image, 0, 0);
   cairo_paint (cr);
 
-
-
   cairo_surface_destroy (image);
+  free(data);
 }
 
 static gboolean onTimerCallback(gpointer user_data) {
@@ -117,9 +118,9 @@ static gboolean onTimerCallback(gpointer user_data) {
   return true; // return true mean contine.
 }
 
-bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name) {
+bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel) {
 
-  model_.load(model, label, tensor_name);
+  model_.load(model, label, tensor_name, channel);
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
   char* pipeline = g_strdup_printf("v4l2src device=%s ! videoconvert ! videoscale ! "
