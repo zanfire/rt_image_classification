@@ -141,7 +141,9 @@ static void on_draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestam
 
 bool Application::setup(char const* device, char const* model, char const* label, char const* tensor_name, int channel) {
 
-  model_.load(model, label, tensor_name, channel);
+  if (!model_.load(model, label, tensor_name, channel)) {
+    return false;
+  }
 
   // TODO: cross-platform you can switch v4l2src to othe elemenet for supporting windows and macosx.
 
