@@ -54,7 +54,7 @@ public:
    * @param buffer 
    * @param size 
    */
-  void onNewFrame(guint8* buffer, guint size);
+  void on_new_frame(guint8* buffer, guint size);
   
   /**
    * @brief Return current label and prob.
@@ -76,10 +76,10 @@ private:
   bool load_labels(char const* path);
   bool activate();
   /**
-   * @brief SAve the tensor output scaled to float.
+   * @brief Save the tensor output scaled to float.
    * 
    */
-  std::vector<float> saveTensorOutput(int idx);
+  std::vector<float> get_tensor_output_2dim(int idx);
   /**
    * Save the output matrix.
    * 
@@ -89,7 +89,7 @@ private:
    * @param channel 
    * @returnstd::vector<uint8_t>>
    */
-  std::vector<uint8_t> saveTensorOutputQuantMatrix(int idx, int channel, int* width);
+  std::vector<uint8_t> get_tensor_output_mat_quant(int idx, int channel, int* width);
 };
 
 #endif

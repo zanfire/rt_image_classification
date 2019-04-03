@@ -22,7 +22,7 @@ const std::string output_layer_name = "softmax1";
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
-void GetTopN(std::vector<float>& prediction, int num_results, float threshold, std::vector<std::pair<float, int> >* top_results) {
+void get_top_N(std::vector<float>& prediction, int num_results, float threshold, std::vector<std::pair<float, int> >* top_results) {
   //g_print("prediction size %d", prediction_size);
   // Will contain top N results in ascending order.
   std::priority_queue<std::pair<float, int>, std::vector<std::pair<float, int> >,
@@ -54,7 +54,7 @@ void GetTopN(std::vector<float>& prediction, int num_results, float threshold, s
 }
 
 // Preprocess the input image and feed the TFLite interpreter buffer for a float model.
-void ProcessInputWithFloatModel(uint8_t* input, float* buffer, int image_width, int image_height, int image_channels) {
+void process_input_float_model(uint8_t* input, float* buffer, int image_width, int image_height, int image_channels) {
   for (int y = 0; y < wanted_input_height; ++y) {
     float* out_row = buffer + (y * wanted_input_width * wanted_input_channels);
     for (int x = 0; x < wanted_input_width; ++x) {
@@ -71,7 +71,7 @@ void ProcessInputWithFloatModel(uint8_t* input, float* buffer, int image_width, 
 }
 
 // Preprocess the input image and feed the TFLite interpreter buffer for a quantized model.
-void ProcessInputWithQuantizedModel(
+void process_input_quant_model(
     uint8_t* input, uint8_t* output, int image_width, int image_height, int image_channels) {
   for (int y = 0; y < wanted_input_height; ++y) {
     uint8_t* out_row = output + (y * wanted_input_width * wanted_input_channels);
@@ -183,12 +183,12 @@ std::vector<uint8_t> Model::get_overlay(int* width) {
 }
 
 
-void Model::onNewFrame(guint8 * buffer, guint len) {
+void Model::on_new_frame(guint8 * buffer, guint len) {
   if (buffer == nullptr) return;
 
-  int image_width = 224;
-  int image_height = 224;
-  int image_channels = 4;
+  constexpr int image_width = 224;
+  constexpr int image_height = 224;
+  constexpr int image_channels = 4;
 
   int input = interpreter_->inputs()[0];
   TfLiteTensor *input_tensor = interpreter_->tensor(input);
@@ -197,11 +197,11 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
 
   if (is_quantized) {
     uint8_t* out = interpreter_->typed_tensor<uint8_t>(input);
-    ProcessInputWithQuantizedModel(buffer, out, image_width, image_height, image_channels);
+    process_input_quant_model(buffer, out, image_width, image_height, image_channels);
   } 
   else {
     float* out = interpreter_->typed_tensor<float>(input);
-    ProcessInputWithFloatModel(buffer, out, image_width, image_height, image_channels);
+    process_input_float_model(buffer, out, image_width, image_height, image_channels);
   }
 
   if (interpreter_->Invoke() != kTfLiteOk) {
@@ -221,9 +221,9 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
     }
   }
 
-  auto output = saveTensorOutput(reshapeIndex);
+  auto output = get_tensor_output_2dim(reshapeIndex);
   std::vector<std::pair<float, int> > top_results;
-  GetTopN(output, 5, 0.1, &top_results);
+  get_top_N(output, 5, 0.1, &top_results);
   // Set the label 
   for (size_t i = 0; i < top_results.size(); i++) {
     auto el = top_results[i];
@@ -235,14 +235,14 @@ void Model::onNewFrame(guint8 * buffer, guint len) {
   // TODO: 
   if (intIndex >= 0) {
     std::lock_guard<std::mutex> guard(overlayMtx_);
-    overlayFrame_ = saveTensorOutputQuantMatrix(intIndex, channel_, &overlayFrameWidth_);
+    overlayFrame_ = get_tensor_output_mat_quant(intIndex, channel_, &overlayFrameWidth_);
   }
 
   return;
 }
 
 
-std::vector<float> Model::saveTensorOutput(int idx) {
+std::vector<float> Model::get_tensor_output_2dim(int idx) {
   std::vector<float> result;
   int input = interpreter_->inputs()[0];
   TfLiteTensor *input_tensor = interpreter_->tensor(input);
@@ -279,7 +279,7 @@ std::vector<float> Model::saveTensorOutput(int idx) {
   return result;
 }
 
-std::vector<uint8_t> Model::saveTensorOutputQuantMatrix(int idx, int channel, int* width) {
+std::vector<uint8_t> Model::get_tensor_output_mat_quant(int idx, int channel, int* width) {
   std::vector<uint8_t> result;
   TfLiteTensor* tensor = interpreter_->tensor(interpreter_->outputs()[idx]);
   bool is_quantized = true;

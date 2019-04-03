@@ -57,7 +57,7 @@ static GstFlowReturn onAppSinkNewData(GstElement * element, gpointer user_data) 
     GstMapInfo info;
     if (gst_memory_map (mem, &info, GST_MAP_READ)) {
       GST_DEBUG("Mapped memory %p size %d", info.data, (int) info.size);
-      app->model_.onNewFrame(info.data, (guint) info.size);
+      app->model_.on_new_frame(info.data, (guint) info.size);
       gst_memory_unmap (mem, &info);
     }
   }
@@ -110,7 +110,6 @@ static void on_draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestam
     int output_width = GST_VIDEO_INFO_WIDTH(&app->currentVideoInfo_);
     //int output_height = GST_VIDEO_INFO_HEIGHT(&app->currentVideoInfo_);
     float scale = output_width / (float)w;
-    cairo_scale(cr, scale, scale);
 
     data = (uint32_t*)malloc(w * h * sizeof(uint32_t));
 
@@ -118,12 +117,19 @@ static void on_draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestam
       // By default 0x10 on the alpha channel
       data[i] = 0x10000000;
       // I like read, write Alpha 0x30 and red.
-      data[i] = 0x30000000 | (frame[i] << 16);
+      data[i] = 0x50000000 | (frame[i] << 16);
     }
     int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, w);
     // Create a cairo images from the 
     cairo_surface_t* image = cairo_image_surface_create_for_data((uint8_t*)data, CAIRO_FORMAT_ARGB32, w, h, stride);
+    
+    cairo_matrix_t matrix;
+    cairo_matrix_init_rotate(&matrix, 90 * M_PI/180);
+    cairo_matrix_scale(&matrix, 1.0, -1.0);
+    cairo_set_matrix(cr, &matrix);
 
+    cairo_translate(cr, 0, 0);
+    cairo_scale(cr, scale, scale);
     cairo_set_source_surface (cr, image, 0, 0);
     cairo_paint (cr);
     cairo_surface_destroy (image);
