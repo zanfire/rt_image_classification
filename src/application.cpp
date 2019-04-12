@@ -91,15 +91,19 @@ static void on_draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestam
   // Here we write the classification of the object.
   //
   cairo_scale(cr, 1.0, 1.0);
-  cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 1.0);
+  cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
   cairo_select_font_face(cr, "Monospace",
       CAIRO_FONT_SLANT_NORMAL,
       CAIRO_FONT_WEIGHT_BOLD);
-  cairo_set_font_size(cr, 24);
-  cairo_move_to(cr, 20, 20);
+  cairo_set_font_size(cr, 32);
+  cairo_move_to(cr, 30, 30);
   std::string label = app->model_.get_label();
-  cairo_show_text(cr, label.empty() ? " - " :  label.c_str());
-
+  cairo_text_path(cr, label.empty() ? " - " :  label.c_str());
+  // Render black border
+  cairo_fill_preserve(cr);
+  cairo_set_source_rgb(cr, 0, 0, 0);
+  cairo_set_line_width(cr, 1.0);
+  cairo_stroke(cr);
 
   // 
   // Here we render the overlay.
