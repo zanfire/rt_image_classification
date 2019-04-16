@@ -12,13 +12,9 @@
 #include "tensorflow/contrib/lite/optional_debug_tools.h"
 
 // These dimensions need to match those the model was trained with.
-constexpr int wanted_input_width = 224;
-constexpr int wanted_input_height = 224;
 constexpr int wanted_input_channels = 3;
 constexpr float input_mean = 128.0f;
-constexpr float input_std = 127.0f;
-const std::string input_layer_name = "input";
-const std::string output_layer_name = "softmax1";
+constexpr float input_std = 127.5f;
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
@@ -54,7 +50,7 @@ void get_top_N(std::vector<float>& prediction, int num_results, float threshold,
 }
 
 // Preprocess the input image and feed the TFLite interpreter buffer for a float model.
-void process_input_float_model(uint8_t* input, float* buffer, int image_width, int image_height, int image_channels) {
+void process_input_float_model(uint8_t* input, float* buffer, int image_width, int image_height, int image_channels, int wanted_input_width, int wanted_input_height) {
   for (int y = 0; y < wanted_input_height; ++y) {
     float* out_row = buffer + (y * wanted_input_width * wanted_input_channels);
     for (int x = 0; x < wanted_input_width; ++x) {
@@ -64,6 +60,7 @@ void process_input_float_model(uint8_t* input, float* buffer, int image_width, i
           input + (in_y * image_width * image_channels) + (in_x * image_channels);
       float* out_pixel = out_row + (x * wanted_input_channels);
       for (int c = 0; c < wanted_input_channels; ++c) {
+        // (255 - 128) / 127
         out_pixel[c] = (input_pixel[c] - input_mean) / input_std;
       }
     }
@@ -71,8 +68,7 @@ void process_input_float_model(uint8_t* input, float* buffer, int image_width, i
 }
 
 // Preprocess the input image and feed the TFLite interpreter buffer for a quantized model.
-void process_input_quant_model(
-    uint8_t* input, uint8_t* output, int image_width, int image_height, int image_channels) {
+void process_input_quant_model(uint8_t* input, uint8_t* output, int image_width, int image_height, int image_channels, int wanted_input_width, int wanted_input_height) {
   for (int y = 0; y < wanted_input_height; ++y) {
     uint8_t* out_row = output + (y * wanted_input_width * wanted_input_channels);
     for (int x = 0; x < wanted_input_width; ++x) {
@@ -120,16 +116,44 @@ bool Model::activate() {
     interpreter_->ResizeInputTensor(input, sizes);
     // Allocate tensor buffers.
     interpreter_->AllocateTensors();
-    tflite::PrintInterpreterState(interpreter_.get());
+    //tflite::PrintInterpreterState(interpreter_.get());
 
-    int idx = 0;
-    auto outs = interpreter_->outputs();
-    for (auto& o : outs) {
-      g_print("%d: Output %d %s\n", idx, o, interpreter_->GetOutputName(idx));
-      idx++;
+    // List all available tensors.
+    for (size_t i = 0; i < interpreter_->tensors_size(); i++) {
+      auto tensor = interpreter_->tensor(i);
+      if (tensor) {
+        g_print("tensor index %lu type: %d name: %s\n", i, tensor->type, tensor->name);
+      }
+    }
+    // Selecting tensor input, output and overlay.
+    inputTensorIdx_ = interpreter_->inputs()[0];
+    outputTensorIdx_ = interpreter_->outputs().back();
+    char* endptr = nullptr;
+    int tentativeIdx = g_ascii_strtoll(tensor_name_.c_str(), &endptr, 10);
+    if (tentativeIdx != 0 || endptr != tensor_name_.c_str()) {
+      overlayTensorIdx_ = tentativeIdx;
+    }
+    else {
+      // For overlay we loop and select by name.
+      for (size_t i = 0; i < interpreter_->tensors_size(); i++) {
+        auto tensor = interpreter_->tensor(i);
+        if (tensor) {
+          if (!g_strcmp0(tensor->name, tensor_name_.c_str())) {
+            overlayTensorIdx_ = (int)i;
+            break;
+          }
+        }
+      }
     }
 
-
+    g_print("input tensor index %d name: %s\n", inputTensorIdx_, interpreter_->tensor(inputTensorIdx_)->name);
+    g_print("output tensor index %d name: %s\n", outputTensorIdx_, interpreter_->tensor(outputTensorIdx_)->name);
+    if (overlayTensorIdx_ >= 0) {
+      g_print("overlay tensor index %d name: %s\n", overlayTensorIdx_, interpreter_->tensor(overlayTensorIdx_)->name);
+    }
+    else {
+      g_print("overlay tensor NOT available (searching for %s).\n", tensor_name_.c_str());
+    }
     return true;
   }
   else {
@@ -189,39 +213,25 @@ void Model::on_new_frame(guint8 * buffer, guint len) {
   constexpr int image_width = 224;
   constexpr int image_height = 224;
   constexpr int image_channels = 4;
-
-  int input = interpreter_->inputs()[0];
-  TfLiteTensor *input_tensor = interpreter_->tensor(input);
+  TfLiteTensor *input_tensor = interpreter_->tensor(inputTensorIdx_);
 
   bool is_quantized = (input_tensor->type == kTfLiteUInt8);
 
   if (is_quantized) {
-    uint8_t* out = interpreter_->typed_tensor<uint8_t>(input);
-    process_input_quant_model(buffer, out, image_width, image_height, image_channels);
+    uint8_t* out = interpreter_->typed_tensor<uint8_t>(inputTensorIdx_);
+    process_input_quant_model(buffer, out, image_width, image_height, 4, image_width, image_height);
   } 
   else {
-    float* out = interpreter_->typed_tensor<float>(input);
-    process_input_float_model(buffer, out, image_width, image_height, image_channels);
+    float* out = interpreter_->typed_tensor<float>(inputTensorIdx_);
+    process_input_float_model(buffer, out, image_width, image_height, image_channels, image_width, image_height);
   }
 
   if (interpreter_->Invoke() != kTfLiteOk) {
     GST_ERROR("Failed to invoke!");
+    return;
   }
 
-  // read output size from the output sensor
-  auto outs = interpreter_->outputs();
-  int reshapeIndex = 0;
-  int intIndex = -1;
-  for (size_t i = 0; i < outs.size(); i++) {
-    if (!g_strcmp0(interpreter_->GetOutputName(i), "MobilenetV1/Predictions/Reshape_1")) {
-      reshapeIndex = (int)i;
-    }
-    if (!g_strcmp0(interpreter_->GetOutputName(i), tensor_name_.c_str())) {
-      intIndex = (int)i;
-    }
-  }
-
-  auto output = get_tensor_output_2dim(reshapeIndex);
+  auto output = get_tensor_output_2dim(outputTensorIdx_);
   std::vector<std::pair<float, int> > top_results;
   get_top_N(output, 5, 0.1, &top_results);
   // Set the label 
@@ -233,9 +243,9 @@ void Model::on_new_frame(guint8 * buffer, guint len) {
   }
 
   // TODO: 
-  if (intIndex >= 0) {
+  if (overlayTensorIdx_ >= 0) {
     std::lock_guard<std::mutex> guard(overlayMtx_);
-    overlayFrame_ = get_tensor_output_mat_quant(intIndex, channel_, &overlayFrameWidth_);
+    overlayFrame_ = get_tensor_output_mat_quant(overlayTensorIdx_, channel_, &overlayFrameWidth_);
   }
 
   return;
@@ -251,9 +261,7 @@ std::vector<float> Model::get_tensor_output_2dim(int idx) {
     is_quantized = true;
   }
 
-    // Reshape get result
-  const int output_tensor_index = interpreter_->outputs()[idx];
-  TfLiteTensor* output_tensor = interpreter_->tensor(output_tensor_index);
+  TfLiteTensor* output_tensor = interpreter_->tensor(idx);
   TfLiteIntArray* output_dims = output_tensor->dims;
   int output_size = output_dims->data[1];
   if (output_dims->size == 4) {
@@ -262,7 +270,8 @@ std::vector<float> Model::get_tensor_output_2dim(int idx) {
   //g_print("Output dims size %d - output size %d quant %s\n", output_dims->size, output_size, is_quantized ? "yes" : "false");
 
   if (is_quantized) {
-    uint8_t* quantized_output = interpreter_->typed_output_tensor<uint8_t>(idx);
+    //interpreter_->typed_tensor
+    uint8_t* quantized_output = interpreter_->typed_tensor<uint8_t>(idx);
     int32_t zero_point = input_tensor->params.zero_point;
     float scale = input_tensor->params.scale;
     int step =  output_dims->size == 4 ? output_dims->data[3] : 1; 
@@ -281,7 +290,7 @@ std::vector<float> Model::get_tensor_output_2dim(int idx) {
 
 std::vector<uint8_t> Model::get_tensor_output_mat_quant(int idx, int channel, int* width) {
   std::vector<uint8_t> result;
-  TfLiteTensor* tensor = interpreter_->tensor(interpreter_->outputs()[idx]);
+  TfLiteTensor* tensor = interpreter_->tensor(idx);
   bool is_quantized = true;
   TfLiteIntArray* input_dims = tensor->dims;
   int intput_size = input_dims->data[1];
@@ -297,7 +306,7 @@ std::vector<uint8_t> Model::get_tensor_output_mat_quant(int idx, int channel, in
   //g_print("tensor dims size %d - output size %d quant %s\n", input_dims->size, intput_size, is_quantized ? "yes" : "false");
 
   if (is_quantized) {
-    uint8_t* quantized_input = interpreter_->typed_output_tensor<uint8_t>(idx);
+    uint8_t* quantized_input = interpreter_->typed_tensor<uint8_t>(idx);
     int step = input_dims->data[3]; 
     for (int i = channel; i < intput_size; i += step) {
       result.push_back(quantized_input[i]);

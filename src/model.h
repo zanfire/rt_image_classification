@@ -24,6 +24,9 @@ private:
   std::string label_path_;
   std::vector<std::string> labels_;
   std::string tensor_name_;
+  int inputTensorIdx_ = -1;
+  int outputTensorIdx_ = -1;
+  int overlayTensorIdx_ = -1;
   int channel_ = 0;
   // Label index/
   int index_;
